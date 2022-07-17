@@ -42,9 +42,9 @@ logger.add(
 
 
 class DataPost:
+    xsrf_token = ""
 
-    def __init__(self, xsrf_token, game_code):
-        self.xsrf_token = xsrf_token,
+    def __init__(self, game_code):
         self.do = 'entry_insert',
         self.code = game_code  # Code there is in link to the game page
 
@@ -242,9 +242,8 @@ def enter_the_ga(data):
 def enter_gas(gas_list, current_points, wishlist: bool):
     for ga in gas_list:
         if current_points >= ga["price"]:
-            token = config.xsrf_token
             code = ga["game_code"]
-            data = DataPost(token, code).get_data_request()
+            data = DataPost(code).get_data_request()
             points_from_response = enter_the_ga(data)
             if points_from_response is not None:
                 current_points = points_from_response
@@ -268,6 +267,12 @@ def find_next_page_link(soup: BeautifulSoup):
 def parse_page(page: int, wishlist: bool):
     list_page_content = try_get_page(page, wishlist)
     soup = BeautifulSoup(list_page_content, "lxml")
+    if DataPost.xsrf_token == "":
+        xsrf_token_el = soup.select("div.nav__row.is-clickable.js__logout")[0]
+        # I meet some troubles with find "input" name="xsrf_token", so i parse xsrf_token from another dom element.
+        xsrf_token = xsrf_token_el["data-form"][21:]
+        logger.info(f"xsrf_token = {xsrf_token}")
+        DataPost.xsrf_token = xsrf_token
     current_points = 0
     current_points_dom = soup.find("span", class_="nav__points")
     if current_points_dom:
