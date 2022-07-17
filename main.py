@@ -1,7 +1,19 @@
+"""
+Script parse steamgift.com
+at  first it try to enter the pinned giveaways,
+later - your wishlisted giveaway through all pages
+and finally if your acoount points is more than threshold, script try to enter giveaway through not wishlisted pages
+
+ga - giveaway
+gas - giveaways
+"""
+
 import os.path
 import re
 import json
+from pathlib import Path
 
+from loguru import logger
 from bs4 import BeautifulSoup
 
 import config
@@ -12,12 +24,18 @@ headers = config.headers
 headers_post = config.headers_post
 url_search = "https://www.steamgifts.com/giveaways/search"
 url_enter_the_ga = "https://www.steamgifts.com/ajax.php"
-wishlisted_page_file = "wishlist_page.html"
-wishlisted_dir = "wishlisted/"
+pages_dir = "pages/"
+jsons_dir = "jsons/"
 results_dir = "./results/"
-params_wishlist = {
-    'type': 'wishlist',
-}
+save_json_for_debug = True
+save_html_for_debug = True
+
+logger.add(
+    f"{results_dir}debug.log",
+    format="{time} {level} {message}",
+    rotation="1MB",
+    compression="zip",
+)
 
 
 class DataPost:
@@ -34,6 +52,26 @@ class DataPost:
             "code": self.code
         }
         return data
+
+
+# Solution from stackoverflow, i need to know how it works and what is unlink()
+def delete_dir_recursively(directory):
+    directory = Path(directory)
+    for item in directory.iterdir():
+        if item.is_dir():
+            os.rmdir(item)
+        else:
+            item.unlink()
+    directory.rmdir()
+
+
+def delete_previous_temp_dirs(json_directory=jsons_dir, html_directory=pages_dir, main_dir=results_dir):
+    result_json_directory = f"{main_dir}{json_directory}"
+    result_html_directory = f"{main_dir}{html_directory}"
+    if os.path.exists(result_json_directory):
+        delete_dir_recursively(result_json_directory)
+    if os.path.exists(result_html_directory):
+        delete_dir_recursively(result_html_directory)
 
 
 def get_page(url, params):
@@ -60,14 +98,15 @@ def save_json(data, file_name, directory="./", main_dir=results_dir):
         json.dump(data, file, indent=4)
 
 
-def try_get_wishlisted_page():
-    # try:
-    #     with open(f"{results_dir}{wishlisted_dir}{wishlisted_page_file}", "r") as file:
-    #         response = file.read()
-    # except IOError:
-    response = get_page(url_search, params_wishlist)
+def try_get_page(page: int, wishlist: bool):
+    params = {"page": page}
+    if wishlist:
+        params["type"] = "wishlist"
+    response = get_page(url_search, params)
     if response.status_code == 200:
-        save_response(response.content, wishlisted_page_file, wishlisted_dir)
+        page_name = return_page_name(page, wishlist)
+        page_file = f"page{page_name}.html"
+        save_response(response.content, page_file, pages_dir)
     response = response.content
     return response
 
@@ -191,42 +230,85 @@ def get_wished_list(soup):
 def enter_the_ga(data):
     response = session.post(url_enter_the_ga, headers=headers_post, data=data)
     if response.status_code == 200 and not response.text == "":
-        print(response.text)
+        logger.info(response.text)
         parsed_json = json.loads(response.content)
         points = int(parsed_json["points"])
         return points
 
 
-def enter_gas(gas_list, current_points):
+def enter_gas(gas_list, current_points, wishlist: bool):
     for ga in gas_list:
-       if current_points >= ga["price"]:
+        if current_points >= ga["price"]:
             token = config.xsrf_token
             code = ga["game_code"]
             data = DataPost(token, code).get_data_request()
             points_from_response = enter_the_ga(data)
-            if not points_from_response is None:
+            if points_from_response is not None:
                 current_points = points_from_response
-            print(f"Points: {current_points}")
+                if not wishlist and current_points < 200:
+                    logger.info(f"Points: {current_points}")
+                    return current_points
+            logger.info(f"Points: {current_points}")
     return current_points
 
 
-def main():
-    wish_list_page = try_get_wishlisted_page()
-    soup = BeautifulSoup(wish_list_page, "lxml")
+def return_page_name(page, wishlist):
+    return f"{page}{'w' if wishlist else ''}"
+
+
+def find_next_page_link(soup: BeautifulSoup):
+    find = soup.find("div", class_="pagination").find("span", text="Next")
+    is_find = bool(find)
+    return is_find
+
+
+def parse_page(page: int, wishlist: bool):
+    list_page_content = try_get_page(page, wishlist)
+    soup = BeautifulSoup(list_page_content, "lxml")
     current_points = 0
     current_points_dom = soup.find("span", class_="nav__points")
     if current_points_dom:
         current_points = int(current_points_dom.text)
-        print(f"Current points: {current_points}")
-    # gas - giveaways
+        logger.info(f"Current points: {current_points}")
+    page_name = return_page_name(page, wishlist)
     pinned_gas = get_pinned_list(soup)
-    print(f"Pinned giveaways: {pinned_gas}")
-    save_json(pinned_gas, "pinned.json")
-    current_points = enter_gas(pinned_gas, current_points)
-    wished_gas = get_wished_list(soup)
-    print(f"Wished giveaways: {wished_gas}")
-    save_json(wished_gas, "wished.json")
-    current_points = enter_gas(wished_gas, current_points)
+    logger.info(f"Pinned giveaways: {pinned_gas}")
+    if save_json_for_debug:
+        save_json(pinned_gas, f"not_entered_pinned_gas_{page_name}.json", directory=jsons_dir)
+    current_points = enter_gas(pinned_gas, current_points, wishlist=wishlist)
+    not_pinned_gas = get_wished_list(soup)
+    logger.info(f"Not pinned giveaways: {not_pinned_gas}")
+    if save_json_for_debug:
+        save_json(not_pinned_gas, f"not_entered_gas_{page_name}.json", directory=jsons_dir)
+    current_points = enter_gas(not_pinned_gas, current_points, wishlist=wishlist)
+    is_next_page_exist = find_next_page_link(soup)
+    return current_points, is_next_page_exist
+
+
+@logger.catch()
+def main():
+    delete_previous_temp_dirs()
+    # Wishlist crawl
+    page = 1
+    while True:
+        result = parse_page(page, wishlist=True)
+        current_points = result[0]
+        is_next_page_exist = result[1]
+        if not is_next_page_exist or current_points == 0:
+            break
+        page += 1
+
+    # If current points is over 200, crawl common pages
+    # TODO: Need to add logic, first will be entered region restricted and leveled from high to low,
+    #  second - just leveled from high to low, after - the leftovers.
+    #  And somehow need add time threshold, maybe 1 day remaining
+    while current_points >= 200:
+        result = parse_page(page, wishlist=False)
+        current_points = result[0]
+        is_next_page_exist = result[1]
+        if not is_next_page_exist or current_points < 0:
+            break
+        page += 1
 
 
 if __name__ == '__main__':
