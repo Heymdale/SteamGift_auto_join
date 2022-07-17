@@ -2,7 +2,7 @@
 Script parse steamgift.com
 at  first it try to enter the pinned giveaways,
 later - your wishlisted giveaway through all pages
-and finally if your acoount points is more than threshold, script try to enter giveaway through not wishlisted pages
+and finally if your account points is more than threshold, script try to enter giveaway through not wishlisted pages
 
 ga - giveaway
 gas - giveaways
@@ -29,12 +29,15 @@ jsons_dir = "jsons/"
 results_dir = "./results/"
 save_json_for_debug = True
 save_html_for_debug = True
+# Loguru debug level
+debug_level = "DEBUG"
 
 logger.add(
     f"{results_dir}debug.log",
     format="{time} {level} {message}",
     rotation="1MB",
     compression="zip",
+    level=debug_level,
 )
 
 
@@ -277,9 +280,15 @@ def parse_page(page: int, wishlist: bool):
         save_json(pinned_gas, f"not_entered_pinned_gas_{page_name}.json", directory=jsons_dir)
     current_points = enter_gas(pinned_gas, current_points, wishlist=wishlist)
     not_pinned_gas = get_wished_list(soup)
-    logger.info(f"Not pinned giveaways: {not_pinned_gas}")
+    logger.info(f"Not pinned giveaways (wishlisted={wishlist}): {not_pinned_gas}")
     if save_json_for_debug:
         save_json(not_pinned_gas, f"not_entered_gas_{page_name}.json", directory=jsons_dir)
+    # If not wishlisted page, we will sort list. At this moment it sorted by remaining time,
+    # in the code below list will sorted by level, after that by region restricted, but maybe
+    # will be more effective if list sort by some function of time start, time remaining and entries.
+    if not wishlist:
+        not_pinned_gas.sort(key=lambda x: x["level"], reverse=True)
+        not_pinned_gas.sort(key=lambda x: x["region_restricted"], reverse=True)
     current_points = enter_gas(not_pinned_gas, current_points, wishlist=wishlist)
     is_next_page_exist = find_next_page_link(soup)
     return current_points, is_next_page_exist
@@ -299,9 +308,6 @@ def main():
         page += 1
 
     # If current points is over 200, crawl common pages
-    # TODO: Need to add logic, first will be entered region restricted and leveled from high to low,
-    #  second - just leveled from high to low, after - the leftovers.
-    #  And somehow need add time threshold, maybe 1 day remaining
     while current_points >= 200:
         result = parse_page(page, wishlist=False)
         current_points = result[0]
