@@ -212,6 +212,8 @@ def parse_ga(ga: BeautifulSoup):
 
 
 def parse_gas_div(gas_div: BeautifulSoup):
+    if gas_div is None:
+        return []
     elements = gas_div.find_all("div", class_="giveaway__row-outer-wrap")
     gas_list = [parse_ga(ga) for ga in elements if not parse_ga(ga)["entered"]]
     return gas_list
