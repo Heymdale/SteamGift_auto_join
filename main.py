@@ -185,13 +185,24 @@ def parse_is_region_restrict(ga: BeautifulSoup):
     return restricted
 
 
+def parse_is_whitelist(ga: BeautifulSoup):
+    element = ga.find("i", class_="fa-heart")
+    whitelist = bool(element)
+    return whitelist
+
+
+def parse_is_need_steam_groups(ga: BeautifulSoup):
+    element = ga.find("a", class_="giveaway__column--group")
+    steam_groups = bool(element)
+    return steam_groups
+
+
 def parse_is_entered(ga: BeautifulSoup):
     element = ga.select("div.giveaway__row-inner-wrap.is-faded")
     entered = bool(element)
     return entered
 
 
-# ga - giveaway
 def parse_ga(ga: BeautifulSoup):
     entered = parse_is_entered(ga)
     if entered:
@@ -206,6 +217,9 @@ def parse_ga(ga: BeautifulSoup):
         "added_timestamp": parse_added_timestamp(ga),
         "region_restricted": parse_is_region_restrict(ga),
         "level": parse_level(ga),
+        "whitelist": parse_is_whitelist(ga),
+        # You need to be member at least one of the steam groups which sponsored it GA
+        "steam_groups": parse_is_need_steam_groups(ga),
         "entered": entered,
     }
     return info_dict
@@ -287,15 +301,18 @@ def parse_page(page: int, wishlist: bool):
         save_json(pinned_gas, f"not_entered_pinned_gas_{page_name}.json", directory=jsons_dir)
     current_points = enter_gas(pinned_gas, current_points, wishlist=wishlist)
     not_pinned_gas = get_wished_list(soup)
+    # If not wishlisted page, we will sort list. At this moment it sorted by remaining time,
+    # in the code below list will sorted if needed be a member of the steam groups, if in the whitelist, by level,
+    # after that by region restricted, but maybe will be more effective if list sort by some function of time start,
+    # time remaining and entries.
+    if not wishlist:
+        not_pinned_gas.sort(key=lambda x: x["steam_groups"], reverse=True)
+        not_pinned_gas.sort(key=lambda x: x["whitelist"], reverse=True)
+        not_pinned_gas.sort(key=lambda x: x["level"], reverse=True)
+        not_pinned_gas.sort(key=lambda x: x["region_restricted"], reverse=True)
     logger.info(f"Not pinned giveaways (wishlisted={wishlist}): {not_pinned_gas}")
     if save_json_for_debug:
         save_json(not_pinned_gas, f"not_entered_gas_{page_name}.json", directory=jsons_dir)
-    # If not wishlisted page, we will sort list. At this moment it sorted by remaining time,
-    # in the code below list will sorted by level, after that by region restricted, but maybe
-    # will be more effective if list sort by some function of time start, time remaining and entries.
-    if not wishlist:
-        not_pinned_gas.sort(key=lambda x: x["level"], reverse=True)
-        not_pinned_gas.sort(key=lambda x: x["region_restricted"], reverse=True)
     current_points = enter_gas(not_pinned_gas, current_points, wishlist=wishlist)
     is_next_page_exist = find_next_page_link(soup)
     return current_points, is_next_page_exist
@@ -315,6 +332,7 @@ def main():
         page += 1
 
     # If current points is over 200, crawl common pages
+    page = 1
     while current_points >= 200:
         result = parse_page(page, wishlist=False)
         current_points = result[0]
