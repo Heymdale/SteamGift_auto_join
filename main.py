@@ -27,15 +27,15 @@ url_enter_the_ga = "https://www.steamgifts.com/ajax.php"
 pages_dir = "pages/"
 jsons_dir = "jsons/"
 results_dir = "./results/"
-save_json_for_debug = True
-save_html_for_debug = True
+save_json_for_debug = False
+save_html_for_debug = False
 # Loguru debug level
-debug_level = "DEBUG"
+debug_level = "WARNING"
 
 logger.add(
     f"{results_dir}debug.log",
     format="{time} {level} {message}",
-    rotation="1MB",
+    rotation="5MB",
     compression="zip",
     level=debug_level,
 )
@@ -138,7 +138,7 @@ def parse_price(ga: BeautifulSoup):
     headers_spans = ga.find_all("span", class_="giveaway__heading__thin")
     for el in headers_spans:
         text = el.text
-        if text.find("P"):
+        if text.find("P") != -1:
             price = text_to_int(text)
             return price
 
@@ -280,8 +280,8 @@ def find_next_page_link(soup: BeautifulSoup):
     return is_find
 
 
-def parse_page(page: int, wishlist: bool):
-    list_page_content = try_get_page(page, wishlist)
+def parse_page(page: int, is_wishlist: bool):
+    list_page_content = try_get_page(page, is_wishlist)
     soup = BeautifulSoup(list_page_content, "lxml")
     if DataPost.xsrf_token == "":
         xsrf_token_el = soup.select("div.nav__row.is-clickable.js__logout")[0]
@@ -294,26 +294,26 @@ def parse_page(page: int, wishlist: bool):
     if current_points_dom:
         current_points = int(current_points_dom.text)
         logger.info(f"Current points: {current_points}")
-    page_name = return_page_name(page, wishlist)
+    page_name = return_page_name(page, is_wishlist)
     pinned_gas = get_pinned_list(soup)
     logger.info(f"Pinned giveaways: {pinned_gas}")
     if save_json_for_debug:
         save_json(pinned_gas, f"not_entered_pinned_gas_{page_name}.json", directory=jsons_dir)
-    current_points = enter_gas(pinned_gas, current_points, wishlist=wishlist)
+    current_points = enter_gas(pinned_gas, current_points, wishlist=is_wishlist)
     not_pinned_gas = get_wished_list(soup)
     # If not wishlisted page, we will sort list. At this moment it sorted by remaining time,
     # in the code below list will sorted if needed be a member of the steam groups, if in the whitelist, by level,
     # after that by region restricted, but maybe will be more effective if list sort by some function of time start,
     # time remaining and entries.
-    if not wishlist:
+    if not is_wishlist:
         not_pinned_gas.sort(key=lambda x: x["steam_groups"], reverse=True)
         not_pinned_gas.sort(key=lambda x: x["whitelist"], reverse=True)
         not_pinned_gas.sort(key=lambda x: x["level"], reverse=True)
         not_pinned_gas.sort(key=lambda x: x["region_restricted"], reverse=True)
-    logger.info(f"Not pinned giveaways (wishlisted={wishlist}): {not_pinned_gas}")
+    logger.info(f"Not pinned giveaways (wishlisted={is_wishlist}): {not_pinned_gas}")
     if save_json_for_debug:
         save_json(not_pinned_gas, f"not_entered_gas_{page_name}.json", directory=jsons_dir)
-    current_points = enter_gas(not_pinned_gas, current_points, wishlist=wishlist)
+    current_points = enter_gas(not_pinned_gas, current_points, wishlist=is_wishlist)
     is_next_page_exist = find_next_page_link(soup)
     return current_points, is_next_page_exist
 
@@ -324,7 +324,7 @@ def main():
     # Wishlist crawl
     page = 1
     while True:
-        result = parse_page(page, wishlist=True)
+        result = parse_page(page, is_wishlist=True)
         current_points = result[0]
         is_next_page_exist = result[1]
         if not is_next_page_exist or current_points == 0:
@@ -334,7 +334,7 @@ def main():
     # If current points is over 200, crawl common pages
     page = 1
     while current_points >= 200:
-        result = parse_page(page, wishlist=False)
+        result = parse_page(page, is_wishlist=False)
         current_points = result[0]
         is_next_page_exist = result[1]
         if not is_next_page_exist or current_points < 0:
